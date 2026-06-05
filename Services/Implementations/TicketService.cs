@@ -8,204 +8,183 @@ using BusTicketing.Services.Interfaces;
 
 namespace BusTicketing.Services.Implementations
 {
+    /// <summary>
+    /// Service for managing ticket operations including distance estimation and fare computation.
+    /// 
+    /// KEY FIX: Distance is now calculated DIRECTLY between the selected origin and destination,
+    /// NOT from Tagbilaran as an intermediary. The system now supports accurate routes between
+    /// any two municipalities/barangays in Bohol.
+    /// </summary>
     public class TicketService : ITicketService
     {
         private readonly ITicketRepository _ticketRepository;
         private readonly IBarangayRepository _barangayRepository;
+        private readonly IMunicipalityRepository _municipalityRepository;
 
         private const decimal BaseFare = 12m;
         private const double BaseDistance = 5.0;
         private const decimal PerKm = 2.20m;
 
-        public TicketService(ITicketRepository ticketRepository, IBarangayRepository barangayRepository)
+        public TicketService(
+            ITicketRepository ticketRepository,
+            IBarangayRepository barangayRepository,
+            IMunicipalityRepository municipalityRepository)
         {
             _ticketRepository = ticketRepository;
             _barangayRepository = barangayRepository;
+            _municipalityRepository = municipalityRepository;
         }
 
+        /// <summary>
+        /// Computes fare based on distance traveled.
+        /// 
+        /// Fare Structure:
+        /// - Base Fare: ₱12.00 (covers up to 5 km)
+        /// - Additional: ₱2.20 per km beyond base distance
+        /// 
+        /// Formula: Fare = 12 + max(0, distance - 5) * 2.20
+        /// </summary>
+        /// <param name="distance">Distance in kilometers</param>
+        /// <returns>Fare amount in Philippine Pesos, rounded to 2 decimal places</returns>
         public decimal ComputeFare(double distance)
         {
-            if (distance <= BaseDistance) return BaseFare;
+            if (distance <= BaseDistance)
+                return BaseFare;
+
             var extra = Math.Max(0.0, distance - BaseDistance);
             var fare = BaseFare + (decimal)extra * PerKm;
             return Math.Round(fare, 2);
         }
 
-        private static readonly Dictionary<(string from, string to), double> RouteDistances = new()
+        /// <summary>
+        /// Estimates the distance between two barangays using geographic coordinates.
+        /// 
+        /// IMPROVED ALGORITHM:
+        /// 1. If same barangay: return 1.0 km (minimum)
+        /// 2. If same municipality: calculate based on barangay offset
+        /// 3. Use Haversine formula with municipality coordinates for accurate geographic distance
+        /// 4. Apply barangay-level adjustments within the same municipality
+        /// 5. Fallback estimate if coordinates unavailable
+        /// 
+        /// IMPORTANT: This now calculates distance BETWEEN the two locations,
+        /// not from each location back to Tagbilaran. This fixes the original bug.
+        /// </summary>
+        /// <param name="fromBarangayId">Starting barangay ID</param>
+        /// <param name="toBarangayId">Destination barangay ID</param>
+        /// <returns>Distance in kilometers</returns>
+        /// <exception cref="ArgumentException">Thrown if barangays are not found</exception>
+        public async Task<double> EstimateDistanceAsync(int fromBarangayId, int toBarangayId)
         {
-            [("tagbilaran city", "dauis")] = 3.0,
-            [("tagbilaran city", "baclayon")] = 6.0,
-            [("tagbilaran city", "corella")] = 8.0,
-            [("tagbilaran city", "cortes")] = 6.0,
-            [("tagbilaran city", "panglao")] = 18.0,
-            [("tagbilaran city", "alburquerque")] = 10.0,
-            [("tagbilaran city", "loay")] = 19.0,
-            [("tagbilaran city", "maribojoc")] = 14.0,
-            [("tagbilaran city", "sikatuna")] = 17.0,
-            [("tagbilaran city", "loboc")] = 24.0,
-            [("tagbilaran city", "antequera")] = 19.0,
-            [("tagbilaran city", "balilihan")] = 22.0,
-            [("tagbilaran city", "lila")] = 36.0,
-            [("tagbilaran city", "dimiao")] = 32.0,
-            [("tagbilaran city", "valencia")] = 42.0,
-            [("tagbilaran city", "sevilla")] = 36.0,
-            [("tagbilaran city", "bilar")] = 41.0,
-            [("tagbilaran city", "carmen")] = 52.0,
-            [("tagbilaran city", "batuan")] = 47.0,
-            [("tagbilaran city", "catigbian")] = 33.0,
-            [("tagbilaran city", "sagbayan")] = 57.0,
-            [("tagbilaran city", "tubigon")] = 54.0,
-            [("tagbilaran city", "calape")] = 43.0,
-            [("tagbilaran city", "loon")] = 30.0,
-            [("tagbilaran city", "clarin")] = 63.0,
-            [("tagbilaran city", "inabanga")] = 72.0,
-            [("tagbilaran city", "buenavista")] = 83.0,
-            [("tagbilaran city", "getafe")] = 92.0,
-            [("tagbilaran city", "talibon")] = 109.0,
-            [("tagbilaran city", "trinidad")] = 91.0,
-            [("tagbilaran city", "san isidro")] = 78.0,
-            [("tagbilaran city", "danao")] = 83.0,
-            [("tagbilaran city", "dagohoy")] = 92.0,
-            [("tagbilaran city", "pilar")] = 78.0,
-            [("tagbilaran city", "sierra bullones")] = 64.0,
-            [("tagbilaran city", "alicia")] = 95.0,
-            [("tagbilaran city", "candijay")] = 92.0,
-            [("tagbilaran city", "anda")] = 101.0,
-            [("tagbilaran city", "guindulman")] = 69.0,
-            [("tagbilaran city", "duero")] = 55.0,
-            [("tagbilaran city", "jagna")] = 63.0,
-            [("tagbilaran city", "garcia hernandez")] = 52.0,
-            [("tagbilaran city", "mabini")] = 73.0,
-            [("tagbilaran city", "ubay")] = 117.0,
-            [("tagbilaran city", "san miguel")] = 95.0,
-            [("tagbilaran city", "president carlos p. garcia")] = 137.0,
-            [("tagbilaran city", "bien unido")] = 127.0,
-            [("tubigon", "talibon")] = 60.0,
-            [("tubigon", "ubay")] = 85.0,
-            [("jagna", "candijay")] = 30.0,
-            [("jagna", "ubay")] = 60.0,
-            [("ubay", "bien unido")] = 25.0
-        };
+            // Retrieve barangay entities with municipality data
+            var from = await _barangayRepository.GetByIdAsync(fromBarangayId);
+            var to = await _barangayRepository.GetByIdAsync(toBarangayId);
 
-       public async Task<double> EstimateDistanceAsync(int fromBarangayId, int toBarangayId)
-{
-    var from = await _barangayRepository.GetByIdAsync(fromBarangayId);
-    var to = await _barangayRepository.GetByIdAsync(toBarangayId);
+            if (from?.Municipality == null || to?.Municipality == null)
+                throw new ArgumentException("Invalid barangay selection.");
 
-    if (from == null || to == null)
-        throw new ArgumentException("Invalid barangay selection.");
+            // Same barangay: return minimum distance
+            if (from.Id == to.Id)
+                return 1.0;
 
-    // Same barangay
-    if (from.Id == to.Id)
-        return 1.0;
-
-    var fromName = NormalizeMunicipalityName(
-        from.Municipality?.Name
-    ).ToLowerInvariant();
-
-    var toName = NormalizeMunicipalityName(
-        to.Municipality?.Name
-    ).ToLowerInvariant();
-
-    // Same municipality
-    if (from.MunicipalityId == to.MunicipalityId)
-    {
-        var distance = 3.0 + Math.Abs(from.Id - to.Id) * 0.4;
-        return Math.Round(distance, 2);
-    }
-
-    // Direct route exists in dictionary
-    if (TryLookupDistance(fromName, toName, out var routeDistance))
-    {
-        return routeDistance;
-    }
-
-    // Get municipality distances from Tagbilaran
-    double? fromKm = null;
-    double? toKm = null;
-
-    if (fromName == "tagbilaran city")
-    {
-        fromKm = 0;
-    }
-    else if (TryLookupDistance("tagbilaran city", fromName, out var fKm))
-    {
-        fromKm = fKm;
-    }
-
-    if (toName == "tagbilaran city")
-    {
-        toKm = 0;
-    }
-    else if (TryLookupDistance("tagbilaran city", toName, out var tKm))
-    {
-        toKm = tKm;
-    }
-
-    // Compute distance using kilometer difference
-    if (fromKm.HasValue && toKm.HasValue)
-    {
-        double distance = Math.Abs(
-            fromKm.Value - toKm.Value
-        );
-
-        // Small barangay adjustment
-        distance += Math.Abs(from.Id - to.Id) * 0.10;
-
-        return Math.Round(
-            Math.Max(distance, 1.0),
-            2
-        );
-    }
-
-    // Fallback estimate if municipality not found
-    var municipalityDelta = Math.Abs(
-        from.MunicipalityId - to.MunicipalityId
-    );
-
-    var barangayDelta = Math.Abs(
-        from.Id - to.Id
-    );
-
-    var estimatedDistance =
-        8.0 +
-        municipalityDelta * 1.5 +
-        barangayDelta * 0.12;
-
-    return Math.Round(estimatedDistance, 2);
-}
-        private static bool TryLookupDistance(string fromName, string toName, out double distance)
-        {
-            if (RouteDistances.TryGetValue((fromName, toName), out distance) ||
-                RouteDistances.TryGetValue((toName, fromName), out distance))
+            // Same municipality: return distance based on barangay spread
+            if (from.MunicipalityId == to.MunicipalityId)
             {
-                return true;
+                // Base intra-municipal distance plus barangay offset
+                var distance = 3.0 + Math.Abs(from.Id - to.Id) * 0.4;
+                return Math.Round(distance, 2);
             }
 
-            distance = 0;
-            return false;
+            // MAIN FIX: Calculate distance directly between origin and destination municipalities
+            // using geographic coordinates and the Haversine formula
+            return await CalculateDistanceBetweenMunicipalitiesAsync(from.Municipality, to.Municipality);
         }
 
-        private static string NormalizeMunicipalityName(string? name)
+        /// <summary>
+        /// Calculates distance between two municipalities using geographic coordinates.
+        /// 
+        /// Strategy:
+        /// 1. Try to use Haversine formula if both municipalities have coordinates in DB
+        /// 2. Fall back to static coordinate data if DB coordinates unavailable
+        /// 3. Use ID-based estimation as last resort
+        /// </summary>
+        /// <param name="fromMunicipality">Origin municipality</param>
+        /// <param name="toMunicipality">Destination municipality</param>
+        /// <returns>Distance in kilometers</returns>
+        private async Task<double> CalculateDistanceBetweenMunicipalitiesAsync(
+            Municipality fromMunicipality,
+            Municipality toMunicipality)
         {
-            if (string.IsNullOrWhiteSpace(name)) return string.Empty;
+            double? fromLat = null, fromLon = null;
+            double? toLat = null, toLon = null;
 
-            var normalized = name.Trim().ToLowerInvariant();
-            return normalized switch
+            // Try to get coordinates from database first
+            if (fromMunicipality.Latitude.HasValue && fromMunicipality.Longitude.HasValue)
             {
-                "tagbilaran" => "tagbilaran city",
-                "pres. carlos p. garcia" => "president carlos p. garcia",
-                _ => normalized
-            };
+                fromLat = fromMunicipality.Latitude;
+                fromLon = fromMunicipality.Longitude;
+            }
+
+            if (toMunicipality.Latitude.HasValue && toMunicipality.Longitude.HasValue)
+            {
+                toLat = toMunicipality.Latitude;
+                toLon = toMunicipality.Longitude;
+            }
+
+            // Fall back to static coordinate data if not in DB
+            if (!fromLat.HasValue || !fromLon.HasValue)
+            {
+                if (MunicipalityCoordinateData.TryGetCoordinate(fromMunicipality.Name, out var fromCoord))
+                {
+                    fromLat = fromCoord.Latitude;
+                    fromLon = fromCoord.Longitude;
+                }
+            }
+
+            if (!toLat.HasValue || !toLon.HasValue)
+            {
+                if (MunicipalityCoordinateData.TryGetCoordinate(toMunicipality.Name, out var toCoord))
+                {
+                    toLat = toCoord.Latitude;
+                    toLon = toCoord.Longitude;
+                }
+            }
+
+            // Use Haversine formula if we have coordinates
+            if (fromLat.HasValue && fromLon.HasValue && toLat.HasValue && toLon.HasValue)
+            {
+                double distance = DistanceCalculator.CalculateHaversineDistance(
+                    fromLat.Value,
+                    fromLon.Value,
+                    toLat.Value,
+                    toLon.Value
+                );
+
+                // Ensure minimum distance
+                return Math.Max(distance, 1.0);
+            }
+
+            // Fallback: Use municipality ID difference as estimation
+            var municipalityDelta = Math.Abs(fromMunicipality.Id - toMunicipality.Id);
+            var estimatedDistance = 8.0 + municipalityDelta * 1.5;
+            return Math.Round(estimatedDistance, 2);
         }
 
+        /// <summary>
+        /// Creates a new ticket record with the provided information.
+        /// </summary>
+        /// <param name="dto">Ticket creation DTO containing barangay selections, distance, and fare</param>
+        /// <returns>The ID of the newly created ticket</returns>
+        /// <exception cref="ArgumentException">Thrown if barangays are invalid</exception>
         public async Task<int> CreateTicketAsync(CreateTicketInputDto dto)
         {
-            // Basic validation at service layer (repositories confirm existence)
+            // Validate that barangays exist
             var from = await _barangayRepository.GetByIdAsync(dto.FromBarangayId);
             var to = await _barangayRepository.GetByIdAsync(dto.ToBarangayId);
-            if (from == null || to == null) throw new ArgumentException("Invalid barangay selection.");
 
+            if (from == null || to == null)
+                throw new ArgumentException("Invalid barangay selection.");
+
+            // Create ticket record
             var ticket = new Ticket
             {
                 FromBarangayId = dto.FromBarangayId,
@@ -219,10 +198,16 @@ namespace BusTicketing.Services.Implementations
             return created.Id;
         }
 
+        /// <summary>
+        /// Retrieves a ticket by ID and maps it to the output DTO.
+        /// </summary>
+        /// <param name="id">Ticket ID</param>
+        /// <returns>Ticket DTO if found; null otherwise</returns>
         public async Task<TicketOutputDto?> GetTicketAsync(int id)
         {
             var ticket = await _ticketRepository.GetByIdAsync(id);
-            if (ticket == null) return null;
+            if (ticket == null)
+                return null;
 
             return new TicketOutputDto
             {
