@@ -1,0 +1,52 @@
+@model BusTicketing.DTOs.TicketOutputDto
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Ticket Receipt</title>
+    <meta name="viewport" content="width=device-width" />
+    <style>
+        body {
+            font-family: "Courier New", monospace;
+            width: auto;
+            max-width: 320px;
+            margin: 0 auto;
+            padding: 10px;
+        }
+        .center { text-align: center; }
+        .line { border-top: 1px dashed #000; margin: 8px 0; }
+        .btn { display:inline-block; padding:6px 10px; background:#333; color:#fff; text-decoration:none; border-radius:4px; }
+        .no-print { margin-top:10px; }
+        @@media print {
+            .no-print { display: none; }
+            body {
+                margin: 0;
+                padding: 0;
+            }
+        }
+    </style>
+</head>
+<body onload="setTimeout(function() { window.print(); }, 250)">
+    <div class="center">
+        <h2>BOHOL BUS</h2>
+        <p>Official Ticket</p>
+    </div>
+    <div class="line"></div>
+    <p><strong>FROM:</strong> @(Model?.FromMunicipality ?? "") - @(Model?.FromBarangay ?? "")</p>
+    <p><strong>TO:</strong> @(Model?.ToMunicipality ?? "") - @(Model?.ToBarangay ?? "")</p>
+    <p><strong>DISTANCE:</strong> @(Model?.Distance.ToString() ?? "") km</p>
+    <p><strong>FARE:</strong> PHP @(Model != null ? String.Format("{0:0.00}", Model.Fare) : "0.00")</p>
+    <div class="line"></div>
+    <p><strong>Date/Time:</strong> @(Model != null ? Model.DateCreated.ToString("yyyy-MM-dd HH:mm:ss") : "")</p>
+    <div class="line"></div>
+    <p class="center">Thank you for riding with us!</p>
+
+    <div class="no-print center">
+        <button type="button" class="btn" onclick="window.print()">Print Ticket</button>
+        <a class="btn" href="/Ticket/Create">New Ticket</a>
+    </div>
+</body>
+</html>
